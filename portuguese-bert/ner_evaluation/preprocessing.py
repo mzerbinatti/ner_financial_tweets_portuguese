@@ -8,6 +8,7 @@ from typing import (Dict, List, Optional)
 import torch
 
 from tag_encoder import NERTagsEncoder, SCHEMES
+from pos_tag_encoder import POSTagsEncoder
 from tokenization import (
     Token,
     TokenizerWithAlignment,
@@ -26,6 +27,12 @@ NETag = collections.namedtuple("NETag", ['doc_id',
                                          'start_position',
                                          'end_position'])
 
+NEPosTag = collections.namedtuple("NEPosTag",  ['doc_id',
+                                            'entity_id',
+                                            'text',
+                                            'type',
+                                            'start_position',
+                                            'end_position'])
 
 class Example(object):
     """
@@ -38,12 +45,16 @@ class Example(object):
                  doc_tokens: List[Token],
                  tags: List[NETag],
                  labels: List[str],
+                 pos_tags: List[NEPosTag],
+                 pos_labels: List[str],
                  ):
         self.doc_id = doc_id
         self.orig_text = orig_text
         self.doc_tokens = doc_tokens
         self.tags = tags
         self.labels = labels
+        self.pos_tags = pos_tags
+        self.pos_labels = pos_labels
 
         for token in doc_tokens:
             token._example = self
@@ -104,12 +115,21 @@ def read_examples(input_file: str,
         doc_tokens, char_to_word_offset = tokenizer_with_alignment(doc_text)
         labels = ["O"] * len(doc_tokens)
         tags = []
+        
+        pos_labels = ["X"] * len(doc_tokens)
+        pos_tags = []
 
         def set_label(index, tag):
             if labels[index] != 'O':
                 LOGGER.warning('Overwriting tag %s at position %s to %s',
                                labels[index], index, tag)
             labels[index] = tag
+
+        def set_pos_label(index, tag):
+            if pos_labels[index] != 'X':
+                LOGGER.warning('Overwriting pos_tag %s at position %s to %s',
+                               pos_labels[index], index, tag)
+            pos_labels[index] = tag
 
         if is_training:
             for entity in document["entities"]:
@@ -168,13 +188,52 @@ def read_examples(input_file: str,
                     end_token,
                 )
                 tags.append(entity)
+            
+            # POS tag(MICHEL)
+            for entity in document["pos_tags"]:
+                pos_entity_id = entity["entity_id"]
+                pos_entity_text = entity["text"]
+                pos_type = entity["label"]
+                pos_start_token = None
+                pos_end_token = None
+
+                pos_entity_start_offset = entity["start_offset"]
+                pos_entity_end_offset = entity["end_offset"]
+                pos_start_token = char_to_word_offset[pos_entity_start_offset]
+                # end_offset is NOT inclusive to the text, e.g.,
+                # entity_text == doc_text[start_offset:end_offset]
+                pos_end_token = char_to_word_offset[pos_entity_end_offset - 1]
+
+                assert pos_start_token <= pos_end_token, \
+                    "End token cannot come before start token."
+                reconstructed_text = reconstruct_text_from_tokens(
+                    doc_tokens[pos_start_token:(pos_end_token + 1)])
+                assert pos_entity_text.strip() == reconstructed_text, \
+                    "Entity text and reconstructed text are not equal: %s != %s" % (
+                        pos_entity_text, reconstructed_text)
+
+                # BIO scheme
+                for token_index in range(pos_start_token, pos_end_token + 1):
+                    set_pos_label(token_index, pos_type)
+
+                pos_entity = NEPosTag(
+                    doc_id,
+                    pos_entity_id,
+                    pos_entity_text,
+                    pos_type,
+                    pos_start_token,
+                    pos_end_token,
+                )
+                pos_tags.append(pos_entity)
 
         example = Example(
             doc_id=doc_id,
             orig_text=doc_text,
             doc_tokens=doc_tokens,
             tags=tags,
-            labels=labels)
+            labels=labels,
+            pos_tags=pos_tags,
+            pos_labels=pos_labels)
         examples.append(example)
 
     return examples
@@ -196,6 +255,8 @@ class InputSpan(object):
                  prediction_mask: List[bool],
                  labels: Optional[List[str]] = (),
                  label_ids: Optional[List[int]] = (),
+                 pos_labels: Optional[List[str]] = (),
+                 pos_label_ids: Optional[List[int]] = (),
                  ):
         self.unique_id = unique_id
         self.example_index = example_index
@@ -208,18 +269,53 @@ class InputSpan(object):
         self.segment_ids = segment_ids
         self.labels = labels or []
         self.label_ids = label_ids or []
+        self.pos_labels = pos_labels or []
+        self.pos_label_ids = pos_label_ids or []
         self.prediction_mask = prediction_mask
 
+    # def __repr__(self):
+    #     return "<Input Features: example {}, span {}>".format(
+    #         self.example_index, self.doc_span_index,
+    #     )
+    
     def __repr__(self):
-        return "<Input Features: example {}, span {}>".format(
-            self.example_index, self.doc_span_index,
-        )
+        s = ('unique_id: {}\n'
+             'example_index:{}\n'
+             'doc_span_index: {}\n'
+             'tokens: {}\n'
+             'token_to_orig_map: {}\n'
+             'token_is_max_context: {}\n'
+             'input_ids: {}\n'
+             'input_mask: {}\n'
+             'segment_ids: {}\n'
+             'labels: {}\n'
+             'label_ids: {}\n'
+             'pos_labels: {}\n'
+             'pos_label_ids: {}\n'
+             'prediction_mask: {}\n').format(
+                 self.unique_id, 
+                 self.example_index, 
+                 self.doc_span_index,
+                 self.tokens, 
+                 self.token_to_orig_map, 
+                 self.token_is_max_context, 
+                 self.input_ids, 
+                 self.input_mask, 
+                 self.segment_ids, 
+                 self.labels, 
+                 self.label_ids, 
+                 self.pos_labels, 
+                 self.pos_label_ids, 
+                 self.prediction_mask)
+        return s    
 
     def __str__(self):
         return self.__repr__()
 
     def __len__(self):
         return len(self.tokens)
+
+
 
 
 def _check_is_max_context(doc_spans: List[InputSpan],
@@ -265,6 +361,7 @@ def _check_is_max_context(doc_spans: List[InputSpan],
 
 def convert_examples_to_spans(examples: List[Example],
                               ner_tags_converter: NERTagsEncoder,
+                              pos_tags_converter: POSTagsEncoder,
                               tokenizer: BertTokenizer,
                               max_seq_length: int,
                               doc_stride: int,
@@ -283,11 +380,13 @@ def convert_examples_to_spans(examples: List[Example],
 
         doc_tokens = example.doc_tokens
         doc_labels = example.labels
+        doc_pos_labels = example.pos_labels
 
         tok_to_orig_index = []
         orig_to_tok_index = []
         all_doc_tokens = []
         all_doc_labels = []
+        all_doc_pos_labels = []
         all_prediction_mask = []
 
         for i, token in enumerate(doc_tokens):
@@ -302,9 +401,12 @@ def convert_examples_to_spans(examples: List[Example],
 
                 if j == 0:
                     label = doc_labels[i]
+                    pos_label = doc_pos_labels[i]
                     all_doc_labels.append(label)
+                    all_doc_pos_labels.append(pos_label)
                 else:
                     all_doc_labels.append('X')
+                    all_doc_pos_labels.append('X')
 
         assert len(all_doc_tokens) == len(all_prediction_mask)
         if is_training:
@@ -337,6 +439,8 @@ def convert_examples_to_spans(examples: List[Example],
             segment_ids = []
             labels = None
             label_ids = None
+            pos_labels = None
+            pos_label_ids = None
             prediction_mask = []
             # Include [CLS] token
             tokens.append("[CLS]")
@@ -346,6 +450,7 @@ def convert_examples_to_spans(examples: List[Example],
             # Ignore [CLS] label
             if is_training:
                 labels = ['X']
+                pos_labels = ['X']
 
             for i in range(doc_span.length):
                 # Each doc span will have a dict that indicates if it is the
@@ -362,12 +467,14 @@ def convert_examples_to_spans(examples: List[Example],
                 segment_ids.append(0)
                 if is_training:
                     labels.append(all_doc_labels[split_token_index])
+                    pos_labels.append(all_doc_pos_labels[split_token_index])
                 prediction_mask.append(
                     all_prediction_mask[split_token_index])
 
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
             if is_training:
                 label_ids = ner_tags_converter.convert_tags_to_ids(labels)
+                pos_label_ids = pos_tags_converter.convert_tags_to_ids(pos_labels)
 
             # The mask has 1 for real tokens and 0 for padding tokens. Only real
             # tokens are attended to.
@@ -380,12 +487,15 @@ def convert_examples_to_spans(examples: List[Example],
                 segment_ids.append(0)
                 if is_training:
                     label_ids.append(ner_tags_converter.ignore_index)
+                    pos_label_ids.append(pos_tags_converter.ignore_index)
                 prediction_mask.append(False)
 
             # If not training, use placeholder labels
             if not is_training:
                 labels = ['O'] * len(input_ids)
                 label_ids = [ner_tags_converter.ignore_index] * len(input_ids)
+                pos_labels = ['X'] * len(input_ids) #TODO: MICHEL , verificar se é X ou O (*ou outro char)
+                pos_label_ids = [pos_tags_converter.ignore_index] * len(input_ids)                
 
             assert len(input_ids) == max_seq_length
             assert len(input_mask) == max_seq_length
@@ -415,10 +525,13 @@ def convert_examples_to_spans(examples: List[Example],
                 if is_training:
                     LOGGER.info(
                         "label_ids: %s" % " ".join([str(x) for x in label_ids]))
+                    LOGGER.info(
+                        "pos_label_ids: %s" % " ".join([str(x) for x in pos_label_ids]))
+
 
                 LOGGER.info("tags:")
                 inside_label = False
-                for tok, lab, lab_id in zip(tokens, labels, label_ids):
+                for tok, lab, lab_id, pos, pos_id in zip(tokens, labels, label_ids, pos_labels, pos_label_ids):
                     if lab[0] == "O":
                         if inside_label and tok.startswith("##"):
                             LOGGER.info(f'{tok}\tX')
@@ -430,7 +543,7 @@ def convert_examples_to_spans(examples: List[Example],
                                 # new entity
                                 LOGGER.info('')
                             inside_label = True
-                            LOGGER.info(f'{tok}\t{lab}\t{lab_id}')
+                            LOGGER.info(f'{tok}\t{lab}\t{lab_id}\t{pos}\t{pos_id}')
 
             features.append(
                 InputSpan(
@@ -454,6 +567,7 @@ def convert_examples_to_spans(examples: List[Example],
 
 def get_features_from_examples(examples: List[Example],
                                ner_tags_converter: NERTagsEncoder,
+                               pos_tags_converter: POSTagsEncoder,
                                tokenizer: BertTokenizer,
                                args: Namespace,  # args from ArgumentParser
                                mode: str,
@@ -485,6 +599,7 @@ def get_features_from_examples(examples: List[Example],
         spans = convert_examples_to_spans(
             examples=examples,
             ner_tags_converter=ner_tags_converter,
+            pos_tags_converter=pos_tags_converter,
             tokenizer=tokenizer,
             max_seq_length=args.max_seq_length,
             doc_stride=args.doc_stride,

@@ -54,6 +54,7 @@ from postprocessing import OutputComposer
 from preprocessing import Example, InputSpan
 from results_writer import compile_results, write_jsonl_results
 from tag_encoder import NERTagsEncoder
+from pos_tag_encoder import POSTagsEncoder
 from utils import RunningAccumulator, load_model, save_model
 
 logger = logging.getLogger(__name__)
@@ -238,9 +239,15 @@ def train(args: Namespace,
                 prediction_mask = batch[4]
                 # example_ixs = batch[5]
                 # doc_span_ixs = batch[6]
+                pos_label_ids = batch[7]
 
-                outs = model(input_ids, segment_ids,
-                             input_mask, label_ids, prediction_mask)
+                if args.with_pos == 1:
+                    outs = model(input_ids, segment_ids,
+                                input_mask, label_ids, prediction_mask, pos_label_ids)
+                else:
+                    outs = model(input_ids, segment_ids,
+                                input_mask, label_ids, prediction_mask)
+
                 loss = outs['loss']
                 if args.n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
@@ -509,12 +516,20 @@ def main(
                         required=True,
                         help="File with all NER classes to be considered, one "
                         "per line.")
+    parser.add_argument('--pos_labels_file',
+                        required=True,
+                        default="data/classes-pos-total.txt",
+                        help="File with all POS classes to be considered, one "
+                        "per line.")    
     parser.add_argument('--scheme',
                         default='bio', help='NER tagging scheme (BIO|BILUO).')
     parser.add_argument('--no_crf',
                         action='store_true',
                         help='Remove the CRF layer (use plain BERT or '
                         'BERT-LSTM).')
+    parser.add_argument('--with_pos',
+                        default=0,
+                        help='Add POS to train model')    
     parser.add_argument('--pooler',
                         default='last',
                         help='Pooling strategy for extracting BERT encoded '
@@ -671,7 +686,13 @@ def main(
     tag_encoder = NERTagsEncoder.from_labels_file(
         args.labels_file, scheme=args.scheme.upper())
 
+    # Instantiate NER POS Tag encoder
+    pos_tag_encoder = POSTagsEncoder.from_labels_file(
+        args.pos_labels_file)
+
+
     args.num_labels = tag_encoder.num_labels
+    args.num_pos_labels = pos_tag_encoder.num_labels
 
     # Load a pretrained model
     model = load_model(args, args.bert_model, training=args.do_train)
@@ -687,6 +708,7 @@ def main(
             args,
             tokenizer,
             tag_encoder,
+            pos_tag_encoder,
             mode='train',
         )
 
@@ -703,6 +725,7 @@ def main(
                 args,
                 tokenizer,
                 tag_encoder,
+                pos_tag_encoder,
                 mode='valid',
             )
             # Instantiate OutputComposer to post-process valid examples
@@ -761,6 +784,7 @@ def main(
             args,
             tokenizer,
             tag_encoder,
+            pos_tag_encoder,
             mode='eval',
         )
         # Instantiate OutputComposer to post-process eval examples

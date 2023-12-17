@@ -77,7 +77,10 @@ def get_model_and_kwargs_for_args(
         if args.no_crf:
             model_class = BertForNERClassification
         else:
-            model_class = BertCRF
+            if args.with_pos == 1:
+                model_class = BertCRFWithPOS
+            else:
+                model_class = BertCRF
 
     return model_class, model_args
 
@@ -185,6 +188,27 @@ class BertForNERClassification(BertForTokenClassification):
 
         return logits
 
+    def predict_logits_with_pos(self, input_ids, token_type_ids=None,
+                       attention_mask=None, pos_label_ids=None):
+        """Returns the logits prediction from BERT + classifier."""
+
+        
+        #Adicionar a informaçã de POS ao modelo
+        if pos_label_ids is not None:
+            # input_ids = torch.cat((input_ids, pos_label_ids), dim=1) # concatena os IDs do POS com os Inputs_ids (tokens do texto)
+            input_ids = input_ids + pos_label_ids # sina os IDs do POS com os Inputs_ids (tokens do texto)
+
+        if self.frozen_bert:
+            sequence_output = input_ids
+        else:
+            sequence_output = self.bert_encode(
+                input_ids, token_type_ids, attention_mask)
+
+        sequence_output = self.dropout(sequence_output)
+        logits = self.classifier(sequence_output)  # (batch, seq, tags)
+
+        return logits
+    
     def forward(self,
                 input_ids,
                 token_type_ids=None,
@@ -287,6 +311,10 @@ class BertCRF(BertForNERClassification):
         """
         outputs = {}
 
+        print("----------------- input_ids -------------------")
+        print(input_ids)
+        print("-----------------------------------------------")
+
         logits = self.predict_logits(input_ids=input_ids,
                                      token_type_ids=token_type_ids,
                                      attention_mask=attention_mask)
@@ -332,6 +360,103 @@ class BertCRF(BertForNERClassification):
 
         return outputs
 
+class BertCRFWithPOS(BertForNERClassification):
+    """BERT-CRF model.
+
+    Args:
+        config: BertConfig instance to build BERT model.
+        kwargs: arguments to be passed to superclass.
+    """
+
+    def __init__(self, config: BertConfig, **kwargs: Any):
+        super().__init__(config, **kwargs)
+        del self.loss_fct  # Delete unused CrossEntropyLoss
+        self.crf = CRF(num_tags=config.num_labels, batch_first=True)
+
+    def forward(self,
+                input_ids,
+                token_type_ids=None,
+                attention_mask=None,
+                labels=None,
+                prediction_mask=None,
+                pos_label_ids=None
+                ) -> Dict[str, torch.Tensor]:
+        """Performs the forward pass of the network.
+
+        If `labels` is not `None`, it will calculate and return the the loss,
+        that is the negative log-likelihood of the batch.
+        Otherwise, it will calculate the most probable sequence outputs using
+        Viterbi decoding and return a list of sequences (List[List[int]]) of
+        variable lengths.
+
+        Args:
+            input_ids: tensor of input token ids.
+            token_type_ids: tensor of input sentence type id (0 or 1). Should be
+                all zeros for NER. Can be safely set to `None`.
+            attention_mask: mask tensor that should have value 0 for [PAD]
+                tokens and 1 for other tokens.
+            labels: tensor of gold NER tag label ids. Values should be ints in
+                the range [0, config.num_labels - 1].
+            prediction_mask: mask tensor should have value 0 for tokens that do
+                not have an associated prediction, such as [CLS] and WordPìece
+                subtoken continuations (that start with ##).
+
+        Returns a dict with calculated tensors:
+          - "logits"
+          - "loss" (if `labels` is not `None`)
+          - "y_pred" (if `labels` is `None`)
+        """
+        outputs = {}
+
+        print("----------------- input_ids -------------------")
+        print(input_ids)
+        print("-----------------------------------------------")
+
+        logits = self.predict_logits_with_pos(input_ids=input_ids,
+                                                token_type_ids=token_type_ids,
+                                                attention_mask=attention_mask,
+                                                pos_label_ids=pos_label_ids)
+        outputs['logits'] = logits
+
+        # mask: mask padded sequence and also subtokens, because they must
+        # not be used in CRF.
+        mask = prediction_mask
+        batch_size = logits.shape[0]
+
+        if labels is not None:
+            # Negative of the log likelihood.
+            # Loop through the batch here because of 2 reasons:
+            # 1- the CRF package assumes the mask tensor cannot have interleaved
+            # zeros and ones. In other words, the mask should start with True
+            # values, transition to False at some moment and never transition
+            # back to True. That can only happen for simple padded sequences.
+            # 2- The first column of mask tensor should be all True, and we
+            # cannot guarantee that because we have to mask all non-first
+            # subtokens of the WordPiece tokenization.
+            loss = 0
+            for seq_logits, seq_labels, seq_mask in zip(logits, labels, mask):
+                # Index logits and labels using prediction mask to pass only the
+                # first subtoken of each word to CRF.
+                seq_logits = seq_logits[seq_mask].unsqueeze(0)
+                seq_labels = seq_labels[seq_mask].unsqueeze(0)
+                loss -= self.crf(seq_logits, seq_labels,
+                                 reduction='token_mean')
+
+            loss /= batch_size
+            outputs['loss'] = loss
+
+        else:
+            # Same reasons for iterating
+            output_tags = []
+            for seq_logits, seq_mask in zip(logits, mask):
+                seq_logits = seq_logits[seq_mask].unsqueeze(0)
+                tags = self.crf.decode(seq_logits)
+                # Unpack "batch" results
+                output_tags.append(tags[0])
+
+            outputs['y_pred'] = output_tags
+
+        return outputs
 
 class BertLSTM(BertForNERClassification):
     """BERT model with an LSTM model as classifier. This model is meant to be
