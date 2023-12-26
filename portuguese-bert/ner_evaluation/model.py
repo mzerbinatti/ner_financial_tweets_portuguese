@@ -175,7 +175,7 @@ class BertForNERClassification(BertForTokenClassification):
 
         This method uses just the 3rd output and pools the layers.
         """
-        print("model.py -> BertForNERClassification -> bert_encode")
+        # print("model.py -> BertForNERClassification -> bert_encode")
         # #Adicionar a informaçã de POS ao modelo
         if pos_label_ids is not None:
 
@@ -196,14 +196,24 @@ class BertForNERClassification(BertForTokenClassification):
             all_layers_sequence_outputs = bert_output.last_hidden_state # sequence_output
             # COM POS (FIM)
 
-            # SEM POS (INICIO)
-
-            bert_output = self.bert(
-                input_ids=input_ids,
-                token_type_ids=token_type_ids,
-                attention_mask=attention_mask)
+            # # SEM POS (INICIO) + input_embeds
+            # input_embeddings = self.bert.embeddings.word_embeddings(input_ids)
+            # bert_output = self.bert(
+            #     inputs_embeds=input_embeddings,
+            #     token_type_ids=token_type_ids,
+            #     attention_mask=attention_mask)
             
-            all_layers_sequence_outputs = bert_output.last_hidden_state # sequence_output
+            # all_layers_sequence_outputs = bert_output.last_hidden_state # sequence_output
+            # # SEM POS (FIM) + input_embeds
+
+            # # SEM POS (INICIO) + input_ids
+
+            # bert_output = self.bert(
+            #     input_ids=input_ids,
+            #     token_type_ids=token_type_ids,
+            #     attention_mask=attention_mask)
+            
+            # all_layers_sequence_outputs = bert_output.last_hidden_state # sequence_output
             # SEM POS (FIM)
             
         else:
@@ -230,8 +240,8 @@ class BertForNERClassification(BertForTokenClassification):
         # sequence_output = self.pooler(all_layers_sequence_outputs)
         sequence_output = all_layers_sequence_outputs
 
-        print("BERT_encode -> sequence_output aaaaaa")
-        print(sequence_output.shape)
+        # print("BERT_encode -> sequence_output aaaaaa")
+        # print(sequence_output.shape)
 
         return sequence_output
 
@@ -253,7 +263,7 @@ class BertForNERClassification(BertForTokenClassification):
                        attention_mask=None, pos_label_ids=None):
         """Returns the logits prediction from BERT + classifier."""
 
-        print("model.py -> BertForNERClassification -> predict_logits_with_pos")
+        # print("model.py -> BertForNERClassification -> predict_logits_with_pos")
         if self.frozen_bert:
             sequence_output = input_ids
         else:
@@ -439,7 +449,7 @@ class BertCRFWithPOS(BertForNERClassification):
     """
 
     def __init__(self, config: BertConfig, **kwargs: Any):
-        print("model.py -> BertCRFWithPOS -> __init__")
+        # print("model.py -> BertCRFWithPOS -> __init__")
         super().__init__(config, **kwargs)
         del self.loss_fct  # Delete unused CrossEntropyLoss
         self.crf = CRF(num_tags=config.num_labels, batch_first=True)
@@ -478,7 +488,7 @@ class BertCRFWithPOS(BertForNERClassification):
           - "loss" (if `labels` is not `None`)
           - "y_pred" (if `labels` is `None`)
         """
-        print("model.py -> BertCRFWithPOS -> forward")
+        # print("model.py -> BertCRFWithPOS -> forward")
 
         outputs = {}
 
@@ -503,12 +513,12 @@ class BertCRFWithPOS(BertForNERClassification):
             # 2- The first column of mask tensor should be all True, and we
             # cannot guarantee that because we have to mask all non-first
             # subtokens of the WordPiece tokenization.
-            print("labels.shape")
-            print(labels.shape)
-            print("logits.shape")
-            print(logits.shape)
-            print("prediction_mask.shape(depois)")
-            print(prediction_mask.shape)
+            # print("labels.shape")
+            # print(labels.shape)
+            # print("logits.shape")
+            # print(logits.shape)
+            # print("prediction_mask.shape(depois)")
+            # print(prediction_mask.shape)
 
             loss = 0
 

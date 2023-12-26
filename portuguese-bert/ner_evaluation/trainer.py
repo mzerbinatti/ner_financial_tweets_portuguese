@@ -243,8 +243,8 @@ def train(args: Namespace,
                 # doc_span_ixs = batch[6]
                 pos_label_ids = batch[7]
 
-                print("prediction_mask.shape / prediction_mask")
-                print(prediction_mask.shape)
+                # print("prediction_mask.shape / prediction_mask")
+                # print(prediction_mask.shape)
                 # print("----------------- input_ids ( Training loop) -------------------")
                 # print(input_ids)
                 # print("-----------------------------------------------")
@@ -406,7 +406,7 @@ def evaluate(args: Namespace,
     for all examples. Final predictions are gathered in `output_composer`,
     combining the max-context tokens of each forward pass. Returns the
     metrics dict computed by `sequence_metrics.calculate_metrics()`."""
-    print("trainer.py -> BertCRFWithPOS -> evaluate")
+    # print("trainer.py -> BertCRFWithPOS -> evaluate")
     # Evaluate
     model.eval()
 
@@ -734,8 +734,8 @@ def main(
             mode='train',
         )
 
-        print("Atualizando MODEL -> len(tokenizer)")
-        print(len(tokenizer))
+        # print("Atualizando MODEL -> len(tokenizer)")
+        # print(len(tokenizer))
         ## MICHEL - Redimensionar após adição de TOKENS de POS
         model.resize_token_embeddings(len(tokenizer))
 
