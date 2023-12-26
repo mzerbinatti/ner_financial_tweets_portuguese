@@ -178,11 +178,8 @@ class BertForNERClassification(BertForTokenClassification):
         print("model.py -> BertForNERClassification -> bert_encode")
         # #Adicionar a informaçã de POS ao modelo
         if pos_label_ids is not None:
-            
-            # tam = self.bert.embeddings.word_embeddings.weight.size(0)
-            # print("Tamannho do TOKENIZER do self.bert")
-            # print(tam)
 
+            # COM POS (INICIO)
             pos_label_embeddings = self.bert.embeddings.word_embeddings(pos_label_ids)
             input_embeddings = self.bert.embeddings.word_embeddings(input_ids)
             input_combined = input_embeddings + pos_label_embeddings
@@ -196,28 +193,36 @@ class BertForNERClassification(BertForTokenClassification):
                 token_type_ids=token_type_ids,
                 attention_mask=attention_mask)
             
-            print("type(bert_output)")
-            print(type(bert_output))
-            
             all_layers_sequence_outputs = bert_output.last_hidden_state # sequence_output
-            print("type(all_layers_sequence_outputs)")
-            print(type(all_layers_sequence_outputs))
-            print(all_layers_sequence_outputs.shape)
+            # COM POS (FIM)
 
-            # _, _, all_layers_sequence_outputs, *_ = self.bert(
-            #     inputs_embeds=input_combined,
-            #     token_type_ids=token_type_ids,
-            #     attention_mask=attention_mask)
-            
-            print('------------------ all_layers_sequence_outputs -------------------------')
-            print(all_layers_sequence_outputs)
-            print('------------------ all_layers_sequence_outputs -------------------------')       
-            
-        else:
-            _, _, all_layers_sequence_outputs, *_ = self.bert(
+            # SEM POS (INICIO)
+
+            bert_output = self.bert(
                 input_ids=input_ids,
                 token_type_ids=token_type_ids,
-                attention_mask=attention_mask)            
+                attention_mask=attention_mask)
+            
+            all_layers_sequence_outputs = bert_output.last_hidden_state # sequence_output
+            # SEM POS (FIM)
+            
+        else:
+            # _, _, all_layers_sequence_outputs, *_ = self.bert(
+            #     input_ids=input_ids,
+            #     token_type_ids=token_type_ids,
+            #     attention_mask=attention_mask)   
+
+            # TODO: depois testar com esse (aqyu cai no evaluate)
+            # pos_label_embeddings = self.bert.embeddings.word_embeddings(pos_label_ids)
+            # input_embeddings = self.bert.embeddings.word_embeddings(input_ids)
+            # input_combined = input_embeddings + pos_label_embeddings
+        
+            bert_output = self.bert(
+                input_ids=input_ids,
+                token_type_ids=token_type_ids,
+                attention_mask=attention_mask)        
+
+            all_layers_sequence_outputs = bert_output.last_hidden_state 
         
 
 
@@ -255,22 +260,22 @@ class BertForNERClassification(BertForTokenClassification):
             sequence_output = self.bert_encode(
                 input_ids, token_type_ids, attention_mask, pos_label_ids)
 
-        print("----> type(sequence_output)")
-        print(type(sequence_output))
+        # print("----> type(sequence_output)")
+        # print(type(sequence_output))
 
-        print('all_layers_sequence_outputs -> sequence_output')
-        print(sequence_output.shape)
+        # print('all_layers_sequence_outputs -> sequence_output')
+        # print(sequence_output.shape)
 
         sequence_output = self.dropout(sequence_output)
-        print('self.dropout')
-        print(sequence_output.shape)
+        # print('self.dropout')
+        # print(sequence_output.shape)
 
         logits = self.classifier(sequence_output)  # (batch, seq, tags)
-        print('self.classifier -> logits')
-        print(logits.shape)
+        # print('self.classifier -> logits')
+        # print(logits.shape)
 
-        print('--------------------------- self.classifier -> logits')
-        print(logits)
+        # print('--------------------------- self.classifier -> logits')
+        # print(logits)
         
         return logits
     
