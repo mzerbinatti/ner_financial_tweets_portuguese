@@ -5,8 +5,8 @@ from argparse import Namespace
 from typing import Any, Dict, Optional, Tuple, Type
 
 import torch
-from pytorch_transformers.modeling_bert import (BertConfig,
-                                                BertForTokenClassification)
+from transformers import (BertConfig,
+                          BertForTokenClassification)
 from torchcrf import CRF
 
 LOGGER = logging.getLogger(__name__)
@@ -161,13 +161,17 @@ class BertForNERClassification(BertForTokenClassification):
 
         This method uses just the 3rd output and pools the layers.
         """
-        _, _, all_layers_sequence_outputs, *_ = self.bert(
-            input_ids,
+        bert_output = self.bert(
+            input_ids=input_ids,
             token_type_ids=token_type_ids,
             attention_mask=attention_mask)
 
+        all_layers_sequence_outputs = bert_output.last_hidden_state # sequence_output -> https://github.com/huggingface/transformers/blob/c48787f347bd604f656c2cfff730e029c8f8c1fe/src/transformers/models/bert/modeling_bert.py#L1032C25-L1032C25
+
         # Use the defined pooler to pool the hidden representation layers
-        sequence_output = self.pooler(all_layers_sequence_outputs)
+        # Obs: Não precisa executar o pooler, pois ele ja executa o pooler nesta versão do transformer.
+        # sequence_output = self.pooler(all_layers_sequence_outputs)
+        sequence_output = all_layers_sequence_outputs
 
         return sequence_output
 
