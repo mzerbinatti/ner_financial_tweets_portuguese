@@ -9,13 +9,14 @@ class POSTagsEncoder(object):
     conversion of tags to ids and vice versa."""
 
     def __init__(self,
-                 classes: List[str],
-                 ignore_index: int = -100):
+                    classes: List[str],
+                    ignore_index: int = 0):
+                    # ignore_index: int = -100):
 
         if not len(set(classes)) == len(classes):
             raise ValueError("`classes` have duplicate entries.")
-        if ignore_index >= 0 or not isinstance(ignore_index, int):
-            raise ValueError("`ignore_index` should be a negative int.")
+        # if ignore_index >= 0 or not isinstance(ignore_index, int):
+        #     raise ValueError("`ignore_index` should be a negative int.")
 
         self.classes = tuple(classes)
         self.pos_tags = ["O"]

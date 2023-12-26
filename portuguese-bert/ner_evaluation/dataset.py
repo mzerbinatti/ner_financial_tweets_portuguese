@@ -37,6 +37,7 @@ def get_dataset(features: List[InputSpan]) -> TensorDataset:
     all_pos_label_ids = torch.tensor(
         [f.pos_label_ids for f in features], dtype=torch.long) #TODO: MICHEL , verificar se -100 e 0 serão usados, ou apenas -100 (comparar com o all_labels_ids para entender)
 
+
     return TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
                          all_label_ids, all_prediction_mask,
                          all_example_index, all_doc_span_index,

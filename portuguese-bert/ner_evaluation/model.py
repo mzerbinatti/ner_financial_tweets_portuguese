@@ -1,12 +1,18 @@
+## https://github.com/huggingface/transformers/blob/fa21ead73db473d88f8eca1ec244aba776fd9047/src/transformers/models/bert/modeling_bert.py#L184
+## https://huggingface.co/transformers/v3.0.2/migration.html
 """Implementations of BERT, BERT-CRF, BERT-LSTM and BERT-LSTM-CRF models."""
+
+
 
 import logging
 from argparse import Namespace
 from typing import Any, Dict, Optional, Tuple, Type
 
 import torch
-from pytorch_transformers.modeling_bert import (BertConfig,
-                                                BertForTokenClassification)
+# from pytorch_transformers.modeling_bert import (BertConfig,
+#                                                 BertForTokenClassification)
+from transformers import (BertConfig,
+                          BertForTokenClassification)
 from torchcrf import CRF
 
 LOGGER = logging.getLogger(__name__)
@@ -77,10 +83,15 @@ def get_model_and_kwargs_for_args(
         if args.no_crf:
             model_class = BertForNERClassification
         else:
-            if args.with_pos == 1:
+            if args.with_pos:                
                 model_class = BertCRFWithPOS
             else:
                 model_class = BertCRF
+
+    print("---///---///---///---///---///---///---///---///")
+    print("model_class")
+    print(model_class)
+    print("---///---///---///---///---///---///---///---///")
 
     return model_class, model_args
 
@@ -152,7 +163,7 @@ class BertForNERClassification(BertForTokenClassification):
             p.requires_grad = False
         self.frozen_bert = True
 
-    def bert_encode(self, input_ids, token_type_ids=None, attention_mask=None):
+    def bert_encode(self, input_ids, token_type_ids=None, attention_mask=None, pos_label_ids=None):
         """Gets encoded sequence from BERT model and pools the layers accordingly.
         BertModel outputs a tuple whose elements are:
         1- Last encoder layer output. Tensor of shape (B, S, H)
@@ -164,13 +175,58 @@ class BertForNERClassification(BertForTokenClassification):
 
         This method uses just the 3rd output and pools the layers.
         """
-        _, _, all_layers_sequence_outputs, *_ = self.bert(
-            input_ids,
-            token_type_ids=token_type_ids,
-            attention_mask=attention_mask)
+        print("model.py -> BertForNERClassification -> bert_encode")
+        # #Adicionar a informaçã de POS ao modelo
+        if pos_label_ids is not None:
+            
+            # tam = self.bert.embeddings.word_embeddings.weight.size(0)
+            # print("Tamannho do TOKENIZER do self.bert")
+            # print(tam)
+
+            pos_label_embeddings = self.bert.embeddings.word_embeddings(pos_label_ids)
+            input_embeddings = self.bert.embeddings.word_embeddings(input_ids)
+            input_combined = input_embeddings + pos_label_embeddings
+            
+            # print(input_combined.size()) # torch.Size([2, 512, 768])
+            # print(token_type_ids.size()) # torch.Size([2, 512])
+            # print(attention_mask.size()) # torch.Size([2, 512])
+
+            bert_output = self.bert(
+                inputs_embeds=input_combined,
+                token_type_ids=token_type_ids,
+                attention_mask=attention_mask)
+            
+            print("type(bert_output)")
+            print(type(bert_output))
+            
+            all_layers_sequence_outputs = bert_output.last_hidden_state # sequence_output
+            print("type(all_layers_sequence_outputs)")
+            print(type(all_layers_sequence_outputs))
+            print(all_layers_sequence_outputs.shape)
+
+            # _, _, all_layers_sequence_outputs, *_ = self.bert(
+            #     inputs_embeds=input_combined,
+            #     token_type_ids=token_type_ids,
+            #     attention_mask=attention_mask)
+            
+            print('------------------ all_layers_sequence_outputs -------------------------')
+            print(all_layers_sequence_outputs)
+            print('------------------ all_layers_sequence_outputs -------------------------')       
+            
+        else:
+            _, _, all_layers_sequence_outputs, *_ = self.bert(
+                input_ids=input_ids,
+                token_type_ids=token_type_ids,
+                attention_mask=attention_mask)            
+        
+
 
         # Use the defined pooler to pool the hidden representation layers
-        sequence_output = self.pooler(all_layers_sequence_outputs)
+        # sequence_output = self.pooler(all_layers_sequence_outputs)
+        sequence_output = all_layers_sequence_outputs
+
+        print("BERT_encode -> sequence_output aaaaaa")
+        print(sequence_output.shape)
 
         return sequence_output
 
@@ -192,21 +248,30 @@ class BertForNERClassification(BertForTokenClassification):
                        attention_mask=None, pos_label_ids=None):
         """Returns the logits prediction from BERT + classifier."""
 
-        
-        #Adicionar a informaçã de POS ao modelo
-        if pos_label_ids is not None:
-            # input_ids = torch.cat((input_ids, pos_label_ids), dim=1) # concatena os IDs do POS com os Inputs_ids (tokens do texto)
-            input_ids = input_ids + pos_label_ids # sina os IDs do POS com os Inputs_ids (tokens do texto)
-
+        print("model.py -> BertForNERClassification -> predict_logits_with_pos")
         if self.frozen_bert:
             sequence_output = input_ids
         else:
             sequence_output = self.bert_encode(
-                input_ids, token_type_ids, attention_mask)
+                input_ids, token_type_ids, attention_mask, pos_label_ids)
+
+        print("----> type(sequence_output)")
+        print(type(sequence_output))
+
+        print('all_layers_sequence_outputs -> sequence_output')
+        print(sequence_output.shape)
 
         sequence_output = self.dropout(sequence_output)
-        logits = self.classifier(sequence_output)  # (batch, seq, tags)
+        print('self.dropout')
+        print(sequence_output.shape)
 
+        logits = self.classifier(sequence_output)  # (batch, seq, tags)
+        print('self.classifier -> logits')
+        print(logits.shape)
+
+        print('--------------------------- self.classifier -> logits')
+        print(logits)
+        
         return logits
     
     def forward(self,
@@ -311,9 +376,9 @@ class BertCRF(BertForNERClassification):
         """
         outputs = {}
 
-        print("----------------- input_ids -------------------")
-        print(input_ids)
-        print("-----------------------------------------------")
+        # print("----------------- input_ids -------------------")
+        # print(input_ids)
+        # print("-----------------------------------------------")
 
         logits = self.predict_logits(input_ids=input_ids,
                                      token_type_ids=token_type_ids,
@@ -369,9 +434,11 @@ class BertCRFWithPOS(BertForNERClassification):
     """
 
     def __init__(self, config: BertConfig, **kwargs: Any):
+        print("model.py -> BertCRFWithPOS -> __init__")
         super().__init__(config, **kwargs)
         del self.loss_fct  # Delete unused CrossEntropyLoss
         self.crf = CRF(num_tags=config.num_labels, batch_first=True)
+        ## self.pos_tag_embeddings = torch.nn.Embedding(16, config.hidden_size) # MICHEL 16 esta fixo.. depois deixar dinamico
 
     def forward(self,
                 input_ids,
@@ -406,11 +473,9 @@ class BertCRFWithPOS(BertForNERClassification):
           - "loss" (if `labels` is not `None`)
           - "y_pred" (if `labels` is `None`)
         """
-        outputs = {}
+        print("model.py -> BertCRFWithPOS -> forward")
 
-        print("----------------- input_ids -------------------")
-        print(input_ids)
-        print("-----------------------------------------------")
+        outputs = {}
 
         logits = self.predict_logits_with_pos(input_ids=input_ids,
                                                 token_type_ids=token_type_ids,
@@ -433,7 +498,15 @@ class BertCRFWithPOS(BertForNERClassification):
             # 2- The first column of mask tensor should be all True, and we
             # cannot guarantee that because we have to mask all non-first
             # subtokens of the WordPiece tokenization.
+            print("labels.shape")
+            print(labels.shape)
+            print("logits.shape")
+            print(logits.shape)
+            print("prediction_mask.shape(depois)")
+            print(prediction_mask.shape)
+
             loss = 0
+
             for seq_logits, seq_labels, seq_mask in zip(logits, labels, mask):
                 # Index logits and labels using prediction mask to pass only the
                 # first subtoken of each word to CRF.

@@ -39,8 +39,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+
 from pytorch_transformers.optimization import AdamW, WarmupLinearSchedule
 from pytorch_transformers.tokenization_bert import BertTokenizer
+
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import (DataLoader, Dataset, RandomSampler,
@@ -241,9 +243,26 @@ def train(args: Namespace,
                 # doc_span_ixs = batch[6]
                 pos_label_ids = batch[7]
 
-                if args.with_pos == 1:
-                    outs = model(input_ids, segment_ids,
-                                input_mask, label_ids, prediction_mask, pos_label_ids)
+                print("prediction_mask.shape / prediction_mask")
+                print(prediction_mask.shape)
+                # print("----------------- input_ids ( Training loop) -------------------")
+                # print(input_ids)
+                # print("-----------------------------------------------")
+                # print("----------------- pos_label_ids ( Training loop) -------------------")
+                # print(pos_label_ids)
+                # print("-----------------------------------------------")
+
+                if args.with_pos:
+                    outs = model(input_ids=input_ids, 
+                                    token_type_ids=segment_ids,
+                                    attention_mask=input_mask, 
+                                    labels=label_ids, 
+                                    prediction_mask=prediction_mask, 
+                                    pos_label_ids=pos_label_ids)
+                    
+                    # print("----------------- outs ( Training loop) -------------------")
+                    # print(outs)
+                    # print("----------------- FIM - outs ( Training loop) -------------------")                    
                 else:
                     outs = model(input_ids, segment_ids,
                                 input_mask, label_ids, prediction_mask)
@@ -387,6 +406,7 @@ def evaluate(args: Namespace,
     for all examples. Final predictions are gathered in `output_composer`,
     combining the max-context tokens of each forward pass. Returns the
     metrics dict computed by `sequence_metrics.calculate_metrics()`."""
+    print("trainer.py -> BertCRFWithPOS -> evaluate")
     # Evaluate
     model.eval()
 
@@ -402,6 +422,7 @@ def evaluate(args: Namespace,
         prediction_mask = batch[4]
         example_ixs = batch[5]
         doc_span_ixs = batch[6]
+        pos_label_ids = batch[7]
 
         with torch.no_grad():
             if args.no_crf:
@@ -416,9 +437,10 @@ def evaluate(args: Namespace,
                 # BERT-CRF or BERT-LSTM-CRF.
                 # We do not pass `labels` otherwise y_pred is not calculated.
                 outs = model(
-                    input_ids,
-                    segment_ids,
-                    input_mask,
+                    input_ids=input_ids,
+                    token_type_ids=segment_ids,
+                    attention_mask=input_mask,
+                    # pos_label_ids=pos_label_ids,
                     prediction_mask=prediction_mask)
 
             y_pred = outs['y_pred']
@@ -711,6 +733,11 @@ def main(
             pos_tag_encoder,
             mode='train',
         )
+
+        print("Atualizando MODEL -> len(tokenizer)")
+        print(len(tokenizer))
+        ## MICHEL - Redimensionar após adição de TOKENS de POS
+        model.resize_token_embeddings(len(tokenizer))
 
         # Instantiate OutputComposer to post-process train examples
         train_output_comp = OutputComposer(

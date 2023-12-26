@@ -67,8 +67,11 @@ class Example(object):
              'orig_text:{}\n'
              'doc_tokens: {}\n'
              'labels: {}\n'
-             'tags: {}\n').format(self.doc_id, self.orig_text, self.doc_tokens,
-                                  self.labels, self.tags)
+             'tags: {}\n'
+             'pos_labels: {}\n'
+             'pos_tags: {}\n').format(self.doc_id, self.orig_text, self.doc_tokens,
+                                  self.labels, self.tags, self.pos_labels, self.pos_tags)
+                                  
         return s
 
 
@@ -117,6 +120,7 @@ def read_examples(input_file: str,
         tags = []
         
         pos_labels = ["X"] * len(doc_tokens)
+        # pos_labels = ["O"] * len(doc_tokens)
         pos_tags = []
 
         def set_label(index, tag):
@@ -127,6 +131,7 @@ def read_examples(input_file: str,
 
         def set_pos_label(index, tag):
             if pos_labels[index] != 'X':
+            # if pos_labels[index] != 'O':
                 LOGGER.warning('Overwriting pos_tag %s at position %s to %s',
                                pos_labels[index], index, tag)
             pos_labels[index] = tag
@@ -374,10 +379,10 @@ def convert_examples_to_spans(examples: List[Example],
     `doc_stride` tokens."""
 
     unique_id = unique_id_start or 1000000000
-
+    
     features = []
     for (example_index, example) in enumerate(examples):
-
+        
         doc_tokens = example.doc_tokens
         doc_labels = example.labels
         doc_pos_labels = example.pos_labels
@@ -388,6 +393,13 @@ def convert_examples_to_spans(examples: List[Example],
         all_doc_labels = []
         all_doc_pos_labels = []
         all_prediction_mask = []
+
+       
+        ### TESTE POSSSS
+        if 1 == 1: # POS
+            tokenizer.add_tokens(['ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X'])
+            ## bert.resize_token_embeddings(len(tokenizer))
+
 
         for i, token in enumerate(doc_tokens):
             orig_to_tok_index.append(len(all_doc_tokens))
@@ -412,6 +424,7 @@ def convert_examples_to_spans(examples: List[Example],
         if is_training:
             assert len(all_doc_tokens) == len(all_doc_labels)
 
+        
         # The -1 accounts for [CLS]. For NER we have only one sentence, so no
         # [SEP] tokens.
         max_tokens_for_doc = max_seq_length - 1
@@ -431,7 +444,7 @@ def convert_examples_to_spans(examples: List[Example],
             if start_offset + length == len(all_doc_tokens):
                 break
             start_offset += min(length, doc_stride)
-
+        
         for (doc_span_index, doc_span) in enumerate(doc_spans):
             tokens = []
             token_to_orig_map = {}
@@ -474,7 +487,8 @@ def convert_examples_to_spans(examples: List[Example],
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
             if is_training:
                 label_ids = ner_tags_converter.convert_tags_to_ids(labels)
-                pos_label_ids = pos_tags_converter.convert_tags_to_ids(pos_labels)
+                # pos_label_ids = pos_tags_converter.convert_tags_to_ids(pos_labels) # ANTIGO
+                pos_label_ids = tokenizer.convert_tokens_to_ids(pos_labels)
 
             # The mask has 1 for real tokens and 0 for padding tokens. Only real
             # tokens are attended to.
@@ -489,7 +503,7 @@ def convert_examples_to_spans(examples: List[Example],
                     label_ids.append(ner_tags_converter.ignore_index)
                     pos_label_ids.append(pos_tags_converter.ignore_index)
                 prediction_mask.append(False)
-
+            
             # If not training, use placeholder labels
             if not is_training:
                 labels = ['O'] * len(input_ids)
@@ -503,7 +517,7 @@ def convert_examples_to_spans(examples: List[Example],
             assert len(prediction_mask) == max_seq_length
             if is_training:
                 assert len(label_ids) == max_seq_length
-
+            
             if verbose and example_index < 20:
                 LOGGER.info("*** Example ***")
                 LOGGER.info("unique_id: %s" % (unique_id))
@@ -558,6 +572,8 @@ def convert_examples_to_spans(examples: List[Example],
                     segment_ids=segment_ids,
                     labels=labels,
                     label_ids=label_ids,
+                    pos_labels=pos_labels,
+                    pos_label_ids=pos_label_ids,
                     prediction_mask=prediction_mask,
                 ))
             unique_id += 1

@@ -67,6 +67,14 @@ def load_and_cache_examples(
         is_training=True,
         classes=tag_encoder.classes,
         scheme=args.scheme)
+
+    # print("AQUI OK")
+    # print("-----------------------------")
+    # print("examples")
+    # print(examples)
+    # print("-----------------------------")
+    print('ANTES len(tokenizer)')    
+    print(len(tokenizer))    
     features = get_features_from_examples(
         examples,
         tag_encoder,
@@ -76,6 +84,13 @@ def load_and_cache_examples(
         mode=mode,
         unique_id_start=1000000000,
         verbose=args.verbose_logging)
+    print('DEPOIS len(tokenizer)')    
+    print(len(tokenizer))    
+
+    # print("-----------------------------")
+    # print("features")
+    # print(features)
+    # print("-----------------------------")
 
     if mode != 'eval':
         if args.few_samples != -1:
