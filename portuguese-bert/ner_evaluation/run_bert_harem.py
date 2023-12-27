@@ -26,6 +26,7 @@ from eval_tools import confusion_matrix_nested, filtered, SequenceMetrics
 from preprocessing import (Example, InputSpan, get_features_from_examples,
                            read_examples)
 from tag_encoder import NERTagsEncoder
+from pos_tag_encoder import POSTagsEncoder
 from trainer import main
 
 
@@ -36,6 +37,7 @@ def load_and_cache_examples(
     args: Namespace,
     tokenizer: BertTokenizer,
     tag_encoder: NERTagsEncoder,
+    pos_tag_encoder: POSTagsEncoder,
     mode: str,
 ) -> Tuple[Dataset, List[Example], List[InputSpan]]:
     """Preprocesses an input JSON file with raw training/evaluation
@@ -68,6 +70,7 @@ def load_and_cache_examples(
     features = get_features_from_examples(
         examples,
         tag_encoder,
+        pos_tag_encoder,
         tokenizer,
         args,
         mode=mode,

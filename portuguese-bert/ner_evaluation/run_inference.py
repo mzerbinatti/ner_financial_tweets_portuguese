@@ -22,6 +22,7 @@ from postprocessing import OutputComposer
 from preprocessing import (Example, InputSpan, get_features_from_examples,
                            read_examples)
 from tag_encoder import NERTagsEncoder
+from pos_tag_encoder import POSTagsEncoder
 from trainer import evaluate
 from utils import load_model
 
@@ -48,6 +49,7 @@ def load_and_cache_examples(
     args: Namespace,
     tokenizer: BertTokenizer,
     tag_encoder: NERTagsEncoder,
+    pos_tag_encoder: POSTagsEncoder,
     mode: str,
 ) -> Tuple[Dataset, List[Example], List[InputSpan]]:
     """Preprocesses an input JSON file to generate inference examples and
@@ -62,6 +64,7 @@ def load_and_cache_examples(
     features = get_features_from_examples(
         examples,
         tag_encoder,
+        pos_tag_encoder,
         tokenizer,
         args,
         mode=mode,
@@ -115,12 +118,20 @@ if __name__ == "__main__":
                         required=True,
                         help="File with all NER classes to be considered, one "
                         "per line.")
+    parser.add_argument('--pos_labels_file',
+                        required=True,
+                        default="data/classes-pos-total.txt",
+                        help="File with all POS classes to be considered, one "
+                        "per line.")    
     parser.add_argument('--scheme',
                         default='bio', help='NER tagging scheme (BIO|BILUO).')
     parser.add_argument('--no_crf',
                         action='store_true',
                         help='Remove the CRF layer (use plain BERT or '
                         'BERT-LSTM).')
+    parser.add_argument('--with_pos',
+                        default=0,
+                        help='Add POS to train model')      
     parser.add_argument('--pooler',
                         default='last',
                         help='Pooling strategy for extracting BERT encoded '

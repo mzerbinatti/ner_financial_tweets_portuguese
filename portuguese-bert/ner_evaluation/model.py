@@ -8,10 +8,79 @@ import torch
 from pytorch_transformers.modeling_bert import (BertConfig,
                                                 BertForTokenClassification,
                                                 BertEmbeddings,
-                                                BertLayerNorm)
+                                                BertLayerNorm,
+                                                BertEncoder,
+                                                BertPooler,
+                                                BertModel)
 from torchcrf import CRF
+from torch.nn import CrossEntropyLoss, MSELoss
 
 LOGGER = logging.getLogger(__name__)
+
+# BertForTokenClassificationWithPOS extracted from: https://huggingface.co/transformers/v1.1.0/_modules/pytorch_transformers/modeling_bert.html
+# pytorch_transformers 1.1.0
+class BertForTokenClassificationWithPOS(BertForTokenClassification):
+    r"""
+        **labels**: (`optional`) ``torch.LongTensor`` of shape ``(batch_size, sequence_length)``:
+            Labels for computing the token classification loss.
+            Indices should be in ``[0, ..., config.num_labels - 1]``.
+
+    Outputs: `Tuple` comprising various elements depending on the configuration (config) and inputs:
+        **loss**: (`optional`, returned when ``labels`` is provided) ``torch.FloatTensor`` of shape ``(1,)``:
+            Classification loss.
+        **scores**: ``torch.FloatTensor`` of shape ``(batch_size, sequence_length, config.num_labels)``
+            Classification scores (before SoftMax).
+        **hidden_states**: (`optional`, returned when ``config.output_hidden_states=True``)
+            list of ``torch.FloatTensor`` (one for the output of each layer + the output of the embeddings)
+            of shape ``(batch_size, sequence_length, hidden_size)``:
+            Hidden-states of the model at the output of each layer plus the initial embedding outputs.
+        **attentions**: (`optional`, returned when ``config.output_attentions=True``)
+            list of ``torch.FloatTensor`` (one for each layer) of shape ``(batch_size, num_heads, sequence_length, sequence_length)``:
+            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
+
+    Examples::
+
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        model = BertForTokenClassification.from_pretrained('bert-base-uncased')
+        input_ids = torch.tensor(tokenizer.encode("Hello, my dog is cute")).unsqueeze(0)  # Batch size 1
+        labels = torch.tensor([1] * input_ids.size(1)).unsqueeze(0)  # Batch size 1
+        outputs = model(input_ids, labels=labels)
+        loss, scores = outputs[:2]
+
+    """
+    def __init__(self, config):
+        super(BertForTokenClassification, self).__init__(config)
+        self.num_labels = config.num_labels
+
+        self.bert = BertModelWithPOS(config)
+        self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+        self.classifier = torch.nn.Linear(config.hidden_size, config.num_labels)
+
+        self.apply(self.init_weights)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None,
+                position_ids=None, head_mask=None, pos_label_ids=None):
+        outputs = self.bert(input_ids, position_ids=position_ids, token_type_ids=token_type_ids,
+                            attention_mask=attention_mask, head_mask=head_mask, pos_label_ids=pos_label_ids)
+        sequence_output = outputs[0]
+
+        sequence_output = self.dropout(sequence_output)
+        logits = self.classifier(sequence_output)
+
+        outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            # Only keep active parts of the loss
+            if attention_mask is not None:
+                active_loss = attention_mask.view(-1) == 1
+                active_logits = logits.view(-1, self.num_labels)[active_loss]
+                active_labels = labels.view(-1)[active_loss]
+                loss = loss_fct(active_logits, active_labels)
+            else:
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            outputs = (loss,) + outputs
+
+        return outputs  # (loss), scores, (hidden_states), (attentions)
 
 
 def sum_last_4_layers(sequence_outputs: Tuple[torch.Tensor]) -> torch.Tensor:
@@ -84,7 +153,7 @@ def get_model_and_kwargs_for_args(
     return model_class, model_args
 
 
-class BertForNERClassification(BertForTokenClassification):
+class BertForNERClassification(BertForTokenClassificationWithPOS):
     """BERT model for NER task.
 
     The number of NER tags should be defined in the `BertConfig.num_labels`
@@ -106,6 +175,10 @@ class BertForNERClassification(BertForTokenClassification):
                  pooler='last'):
         super().__init__(config)
         del self.classifier  # Deletes classifier of BertForTokenClassification
+
+        # use_pos_embeddings =  kwargs.get('with_pos', False)
+        # if use_pos_embeddings:
+        self.embeddings = BertEmbeddingsWithPOS(config) # TODO: Fazer parametrizavel. Fixo para testes.
 
         num_labels = config.num_labels
 
@@ -151,7 +224,7 @@ class BertForNERClassification(BertForTokenClassification):
             p.requires_grad = False
         self.frozen_bert = True
 
-    def bert_encode(self, input_ids, token_type_ids=None, attention_mask=None):
+    def bert_encode(self, input_ids, token_type_ids=None, attention_mask=None, pos_label_ids=None):
         """Gets encoded sequence from BERT model and pools the layers accordingly.
         BertModel outputs a tuple whose elements are:
         1- Last encoder layer output. Tensor of shape (B, S, H)
@@ -166,7 +239,8 @@ class BertForNERClassification(BertForTokenClassification):
         _, _, all_layers_sequence_outputs, *_ = self.bert(
             input_ids,
             token_type_ids=token_type_ids,
-            attention_mask=attention_mask)
+            attention_mask=attention_mask,
+            pos_label_ids=pos_label_ids)
 
         # Use the defined pooler to pool the hidden representation layers
         sequence_output = self.pooler(all_layers_sequence_outputs)
@@ -174,13 +248,13 @@ class BertForNERClassification(BertForTokenClassification):
         return sequence_output
 
     def predict_logits(self, input_ids, token_type_ids=None,
-                       attention_mask=None):
+                       attention_mask=None, pos_label_ids=None):
         """Returns the logits prediction from BERT + classifier."""
         if self.frozen_bert:
             sequence_output = input_ids
         else:
             sequence_output = self.bert_encode(
-                input_ids, token_type_ids, attention_mask)
+                input_ids, token_type_ids, attention_mask, pos_label_ids=pos_label_ids)
 
         sequence_output = self.dropout(sequence_output)
         logits = self.classifier(sequence_output)  # (batch, seq, tags)
@@ -193,6 +267,7 @@ class BertForNERClassification(BertForTokenClassification):
                 attention_mask=None,
                 labels=None,
                 prediction_mask=None,
+                pos_label_ids=None
                 ) -> Dict[str, torch.Tensor]:
         """Performs the forward pass of the network.
 
@@ -220,7 +295,8 @@ class BertForNERClassification(BertForTokenClassification):
 
         logits = self.predict_logits(input_ids=input_ids,
                                      token_type_ids=token_type_ids,
-                                     attention_mask=attention_mask)
+                                     attention_mask=attention_mask,
+                                     pos_label_ids=pos_label_ids)
         _, y_pred = torch.max(logits, dim=-1)
         y_pred = y_pred.cpu().numpy()
         outputs['logits'] = logits
@@ -254,10 +330,6 @@ class BertCRF(BertForNERClassification):
         super().__init__(config, **kwargs)
         del self.loss_fct  # Delete unused CrossEntropyLoss
         self.crf = CRF(num_tags=config.num_labels, batch_first=True)
-        
-        use_pos_embeddings = kwargs.get('with_pos', False)
-        if use_pos_embeddings:
-            self.embeddings = BertEmbeddingsWithPOS(config)
 
     def forward(self,
                 input_ids,
@@ -265,6 +337,7 @@ class BertCRF(BertForNERClassification):
                 attention_mask=None,
                 labels=None,
                 prediction_mask=None,
+                pos_label_ids=None
                 ) -> Dict[str, torch.Tensor]:
         """Performs the forward pass of the network.
 
@@ -295,7 +368,8 @@ class BertCRF(BertForNERClassification):
 
         logits = self.predict_logits(input_ids=input_ids,
                                      token_type_ids=token_type_ids,
-                                     attention_mask=attention_mask)
+                                     attention_mask=attention_mask,
+                                     pos_label_ids=pos_label_ids)
         outputs['logits'] = logits
 
         # mask: mask padded sequence and also subtokens, because they must
@@ -631,15 +705,18 @@ class BertEmbeddingsWithPOS(BertEmbeddings):
         self.position_embeddings = torch.nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = torch.nn.Embedding(config.type_vocab_size, config.hidden_size)
 
-        max_number_of_pos_tags = 16 # TODO: Deixar dinamico. Fixo para testes (WIP)
-        self.pos_tag_embeddings = torch.nn.Embedding(max_number_of_pos_tags, config.hidden_size)
+        # print("###################### config.num_pos_labels ######################")
+        # print(config.num_pos_labels)
+        # 17 classes + CLS (0 ... 17)
+        max_number_of_pos_label = 17 + 1 # TODO: Deixar dinamico. Fixo para testes (WIP)
+        self.pos_embeddings = torch.nn.Embedding(max_number_of_pos_label, config.hidden_size)
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
 
-    def forward(self, input_ids, token_type_ids=None, position_ids=None, pos_tag_ids=None):
+    def forward(self, input_ids, token_type_ids=None, position_ids=None, pos_label_ids=None):
         seq_length = input_ids.size(1)
         if position_ids is None:
             position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
@@ -648,13 +725,120 @@ class BertEmbeddingsWithPOS(BertEmbeddings):
             token_type_ids = torch.zeros_like(input_ids)
 
         words_embeddings = self.word_embeddings(input_ids)
+
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
-        pos_tag_embeddings = self.pos_tag_embeddings(pos_tag_ids)
-
-        embeddings = words_embeddings + position_embeddings + token_type_embeddings + pos_tag_embeddings
+        
+        if pos_label_ids is not None:
+            pos_label_embeddings = self.pos_embeddings(pos_label_ids)
+            embeddings = words_embeddings + position_embeddings + token_type_embeddings + pos_label_embeddings
+        else:
+            embeddings = words_embeddings + position_embeddings + token_type_embeddings
+        
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
-    
-    
+
+# BertModel extracted from: https://huggingface.co/transformers/v1.1.0/_modules/pytorch_transformers/modeling_bert.html
+# pytorch_transformers 1.1.0
+class BertModelWithPOS(BertModel):
+    r"""
+    Outputs: `Tuple` comprising various elements depending on the configuration (config) and inputs:
+        **last_hidden_state**: ``torch.FloatTensor`` of shape ``(batch_size, sequence_length, hidden_size)``
+            Sequence of hidden-states at the output of the last layer of the model.
+        **pooler_output**: ``torch.FloatTensor`` of shape ``(batch_size, hidden_size)``
+            Last layer hidden-state of the first token of the sequence (classification token)
+            further processed by a Linear layer and a Tanh activation function. The Linear
+            layer weights are trained from the next sentence prediction (classification)
+            objective during Bert pretraining. This output is usually *not* a good summary
+            of the semantic content of the input, you're often better with averaging or pooling
+            the sequence of hidden-states for the whole input sequence.
+        **hidden_states**: (`optional`, returned when ``config.output_hidden_states=True``)
+            list of ``torch.FloatTensor`` (one for the output of each layer + the output of the embeddings)
+            of shape ``(batch_size, sequence_length, hidden_size)``:
+            Hidden-states of the model at the output of each layer plus the initial embedding outputs.
+        **attentions**: (`optional`, returned when ``config.output_attentions=True``)
+            list of ``torch.FloatTensor`` (one for each layer) of shape ``(batch_size, num_heads, sequence_length, sequence_length)``:
+            Attentions weights after the attention softmax, used to compute the weighted average in the self-attention heads.
+
+    Examples::
+
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        model = BertModel.from_pretrained('bert-base-uncased')
+        input_ids = torch.tensor(tokenizer.encode("Hello, my dog is cute")).unsqueeze(0)  # Batch size 1
+        outputs = model(input_ids)
+        last_hidden_states = outputs[0]  # The last hidden-state is the first element of the output tuple
+
+    """
+    def __init__(self, config):
+        super(BertModel, self).__init__(config)
+
+        self.embeddings = BertEmbeddingsWithPOS(config)
+        self.encoder = BertEncoder(config)
+        self.pooler = BertPooler(config)
+
+        self.apply(self.init_weights)
+
+    # def _resize_token_embeddings(self, new_num_tokens):
+    #     old_embeddings = self.embeddings.word_embeddings
+    #     new_embeddings = self._get_resized_embeddings(old_embeddings, new_num_tokens)
+    #     self.embeddings.word_embeddings = new_embeddings
+    #     return self.embeddings.word_embeddings
+
+    # def _prune_heads(self, heads_to_prune):
+    #     """ Prunes heads of the model.
+    #         heads_to_prune: dict of {layer_num: list of heads to prune in this layer}
+    #         See base class PreTrainedModel
+    #     """
+    #     for layer, heads in heads_to_prune.items():
+    #         self.encoder.layer[layer].attention.prune_heads(heads)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, position_ids=None, head_mask=None, pos_label_ids=None):
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids)
+        if token_type_ids is None:
+            token_type_ids = torch.zeros_like(input_ids)
+        if pos_label_ids is None:
+            pos_label_ids = torch.zeros_like(input_ids)
+
+        # We create a 3D attention mask from a 2D tensor mask.
+        # Sizes are [batch_size, 1, 1, to_seq_length]
+        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+        # this attention mask is more simple than the triangular masking of causal attention
+        # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
+        # Since we are adding it to the raw scores before the softmax, this is
+        # effectively the same as removing these entirely.
+        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+
+        # Prepare head mask if needed
+        # 1.0 in head_mask indicate we keep the head
+        # attention_probs has shape bsz x n_heads x N x N
+        # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
+        # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
+        if head_mask is not None:
+            if head_mask.dim() == 1:
+                head_mask = head_mask.unsqueeze(0).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+                head_mask = head_mask.expand(self.config.num_hidden_layers, -1, -1, -1, -1)
+            elif head_mask.dim() == 2:
+                head_mask = head_mask.unsqueeze(1).unsqueeze(-1).unsqueeze(-1)  # We can specify head_mask for each layer
+            head_mask = head_mask.to(dtype=next(self.parameters()).dtype) # switch to fload if need + fp16 compatibility
+        else:
+            head_mask = [None] * self.config.num_hidden_layers
+
+        embedding_output = self.embeddings(input_ids, position_ids=position_ids, token_type_ids=token_type_ids, pos_label_ids=pos_label_ids)
+        encoder_outputs = self.encoder(embedding_output,
+                                       extended_attention_mask,
+                                       head_mask=head_mask)
+        sequence_output = encoder_outputs[0]
+        pooled_output = self.pooler(sequence_output)
+
+        outputs = (sequence_output, pooled_output,) + encoder_outputs[1:]  # add hidden_states and attentions if they are here
+        return outputs  # sequence_output, pooled_output, (hidden_states), (attentions) 
+
+

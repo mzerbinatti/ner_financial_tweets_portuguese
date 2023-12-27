@@ -54,6 +54,7 @@ from postprocessing import OutputComposer
 from preprocessing import Example, InputSpan
 from results_writer import compile_results, write_jsonl_results
 from tag_encoder import NERTagsEncoder
+from pos_tag_encoder import POSTagsEncoder
 from utils import RunningAccumulator, load_model, save_model
 
 logger = logging.getLogger(__name__)
@@ -238,9 +239,19 @@ def train(args: Namespace,
                 prediction_mask = batch[4]
                 # example_ixs = batch[5]
                 # doc_span_ixs = batch[6]
+                pos_label_ids = batch[7]
 
-                outs = model(input_ids, segment_ids,
-                             input_mask, label_ids, prediction_mask)
+                if args.with_pos:
+                    outs = model(input_ids=input_ids, 
+                                token_type_ids=segment_ids,
+                                attention_mask=input_mask, 
+                                labels=label_ids, 
+                                prediction_mask=prediction_mask, 
+                                pos_label_ids=pos_label_ids)
+                else:
+                    outs = model(input_ids, segment_ids,
+                                input_mask, label_ids, prediction_mask)
+
                 loss = outs['loss']
                 if args.n_gpu > 1:
                     loss = loss.mean()  # mean() to average on multi-gpu.
@@ -395,6 +406,7 @@ def evaluate(args: Namespace,
         prediction_mask = batch[4]
         example_ixs = batch[5]
         doc_span_ixs = batch[6]
+        pos_label_ids = batch[7]
 
         with torch.no_grad():
             if args.no_crf:
@@ -404,7 +416,8 @@ def evaluate(args: Namespace,
                     segment_ids,
                     input_mask,
                     labels=label_ids,
-                    prediction_mask=prediction_mask)
+                    prediction_mask=prediction_mask,
+                    pos_label_ids=pos_label_ids) # TODO: Verificar
             else:
                 # BERT-CRF or BERT-LSTM-CRF.
                 # We do not pass `labels` otherwise y_pred is not calculated.
@@ -509,12 +522,20 @@ def main(
                         required=True,
                         help="File with all NER classes to be considered, one "
                         "per line.")
+    parser.add_argument('--pos_labels_file',
+                        required=True,
+                        default="data/classes-pos-total.txt",
+                        help="File with all POS classes to be considered, one "
+                        "per line.")     
     parser.add_argument('--scheme',
                         default='bio', help='NER tagging scheme (BIO|BILUO).')
     parser.add_argument('--no_crf',
                         action='store_true',
                         help='Remove the CRF layer (use plain BERT or '
                         'BERT-LSTM).')
+    parser.add_argument('--with_pos',
+                        default=0,
+                        help='Add POS to train model')                            
     parser.add_argument('--pooler',
                         default='last',
                         help='Pooling strategy for extracting BERT encoded '
@@ -673,6 +694,12 @@ def main(
 
     args.num_labels = tag_encoder.num_labels
 
+    # Instantiate NER POS Tag encoder
+    pos_tag_encoder = POSTagsEncoder.from_labels_file(
+        args.pos_labels_file)
+    
+    args.num_pos_labels = pos_tag_encoder.num_labels
+
     # Load a pretrained model
     model = load_model(args, args.bert_model, training=args.do_train)
     model.to(device)
@@ -687,8 +714,14 @@ def main(
             args,
             tokenizer,
             tag_encoder,
+            pos_tag_encoder,
             mode='train',
         )
+
+        # TODO: Refatorar. Adicionar os novos Tokens e dar um resize. Ver se tem q ser aqui ou antes.
+        # Hoje ele esta sendo adicionado no preprocessing.py
+        # tokenizer.add_tokens(['ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X'])
+        model.resize_token_embeddings(len(tokenizer))
 
         # Instantiate OutputComposer to post-process train examples
         train_output_comp = OutputComposer(
@@ -703,6 +736,7 @@ def main(
                 args,
                 tokenizer,
                 tag_encoder,
+                pos_tag_encoder,
                 mode='valid',
             )
             # Instantiate OutputComposer to post-process valid examples
@@ -761,6 +795,7 @@ def main(
             args,
             tokenizer,
             tag_encoder,
+            pos_tag_encoder,
             mode='eval',
         )
         # Instantiate OutputComposer to post-process eval examples
