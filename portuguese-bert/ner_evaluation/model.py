@@ -6,7 +6,9 @@ from typing import Any, Dict, Optional, Tuple, Type
 
 import torch
 from pytorch_transformers.modeling_bert import (BertConfig,
-                                                BertForTokenClassification)
+                                                BertForTokenClassification,
+                                                BertEmbeddings,
+                                                BertLayerNorm)
 from torchcrf import CRF
 
 LOGGER = logging.getLogger(__name__)
@@ -252,6 +254,10 @@ class BertCRF(BertForNERClassification):
         super().__init__(config, **kwargs)
         del self.loss_fct  # Delete unused CrossEntropyLoss
         self.crf = CRF(num_tags=config.num_labels, batch_first=True)
+        
+        use_pos_embeddings = kwargs.get('with_pos', False)
+        if use_pos_embeddings:
+            self.embeddings = BertEmbeddingsWithPOS(config)
 
     def forward(self,
                 input_ids,
@@ -615,3 +621,40 @@ class BertLSTMCRF(BertLSTM):
             outputs['y_pred'] = output_tags
 
         return outputs
+
+
+# https://discuss.huggingface.co/t/how-to-use-additional-input-features-for-ner/4364/27
+class BertEmbeddingsWithPOS(BertEmbeddings):
+    def __init__(self, config):
+        super().__init__(config)
+        self.word_embeddings = torch.nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
+        self.position_embeddings = torch.nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.token_type_embeddings = torch.nn.Embedding(config.type_vocab_size, config.hidden_size)
+
+        max_number_of_pos_tags = 16 # TODO: Deixar dinamico. Fixo para testes (WIP)
+        self.pos_tag_embeddings = torch.nn.Embedding(max_number_of_pos_tags, config.hidden_size)
+
+        # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
+        # any TensorFlow checkpoint file
+        self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, input_ids, token_type_ids=None, position_ids=None, pos_tag_ids=None):
+        seq_length = input_ids.size(1)
+        if position_ids is None:
+            position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+            position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        if token_type_ids is None:
+            token_type_ids = torch.zeros_like(input_ids)
+
+        words_embeddings = self.word_embeddings(input_ids)
+        position_embeddings = self.position_embeddings(position_ids)
+        token_type_embeddings = self.token_type_embeddings(token_type_ids)
+        pos_tag_embeddings = self.pos_tag_embeddings(pos_tag_ids)
+
+        embeddings = words_embeddings + position_embeddings + token_type_embeddings + pos_tag_embeddings
+        embeddings = self.LayerNorm(embeddings)
+        embeddings = self.dropout(embeddings)
+        return embeddings
+    
+    
