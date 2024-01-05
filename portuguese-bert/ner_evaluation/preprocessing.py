@@ -379,7 +379,8 @@ def convert_examples_to_spans(examples: List[Example],
                     all_doc_pos_labels.append(pos_label)
                 else:
                     all_doc_labels.append('X')
-                    all_doc_pos_labels.append('X') # X ou O? Verificar.
+                    # all_doc_pos_labels.append('X') # X ou O? Verificar.
+                    all_doc_pos_labels.append(pos_label) # igual ao artigo. Todos os subtokens são setados com o respectivo POS 
 
         assert len(all_doc_tokens) == len(all_prediction_mask)
         if is_training:
