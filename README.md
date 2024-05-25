@@ -6,7 +6,7 @@ Abaixo, seguem os passos para preparar os dados e reproduzir o experimento.
 
 
 
-## 1. Converter DANTEStocks fo formato CONNLu para JSON
+## 1. Converter DANTEStocks do formato CONNLu para JSON
 
 Obs: O arquivo CONNLu base do DANTEstock para as execuções abaixo esta disponível em: https://www.kaggle.com/datasets/michelmzerbinati/portuguese-tweet-corpus-annotated-with-ner
 
@@ -20,10 +20,12 @@ Execute o arquivo dantestocks_converter.py:
 ```bash
 python prepare_environment/dantestocks_converter.py --dataset_path "<path_arquivo_conllu>" --output_path "<path_arquivo_json_sera_gerado>" --annotation_type BIO
 ```
+
 - Ex.: 
 ```bash
 python prepare_environment/dantestocks_converter.py --dataset_path "prepare_environment/data/DANTEStocks (15dez2022)_v5_2.conllu" --output_path "prepare_environment/data/DANTEStocks.json" --annotation_type BIO
 ```
+
 Será gerado um arquivo JSON com as ENTIDADES, POS e as respectivas posições/index.
 
 ## 2. Divisão dos dados em Treinamento, Validação e Teste.
@@ -49,12 +51,12 @@ python prepare_environment/dantesrocks_json_split.py --input_json_path "prepare_
 ```
 
 
-
 ## 3. Executar os modelos BERT
 
 Com os arquivos de treinamento, validação e testes, agora é possível executar o BERTimbau. 
 
 As execuções podem ser realizadas de acordo com as configuraçÕes desejadas (POS, CRF, etc) abaixo.
+
 
 ### BERTimbau Original + CRF (pytorch + sem POS)
 
@@ -142,6 +144,6 @@ python run_bert_harem.py  \
 Referências:
 
 
-DANTEStocks - https://sites.google.com/icmc.usp.br/poetisa/resources-and-tools
-BERTimbau - https://github.com/neuralmind-ai/portuguese-bert
-Versão do DANTEStocks usado neste repositório - https://www.kaggle.com/datasets/michelmzerbinati/portuguese-tweet-corpus-annotated-with-ner
+- DANTEStocks - https://sites.google.com/icmc.usp.br/poetisa/resources-and-tools
+- BERTimbau - https://github.com/neuralmind-ai/portuguese-bert
+- Versão do DANTEStocks usado neste repositório - https://www.kaggle.com/datasets/michelmzerbinati/portuguese-tweet-corpus-annotated-with-ner
